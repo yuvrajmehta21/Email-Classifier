@@ -31,6 +31,23 @@ Standard deployment pattern is documented in the parent [../CLAUDE.md](../CLAUDE
 
 To watch cron in real time: `ssh root@167.71.232.223 'tail -f /root/inbox-cycle.log'`.
 
+## What needs me (vs. what runs on its own)
+
+The droplet runs the entire pipeline autonomously. My Mac being on, off, online, or offline has zero effect on whether emails get classified. The only things that require me to do something:
+
+- **Code changes** — edit on Mac, `git push`, then `ssh root@167.71.232.223 'cd /root/Email-Classifier && git pull'`. The next cron tick uses the new code. No restart needed.
+- **Secret changes** (e.g., new refresh token after a re-bootstrap) — `scp .env root@167.71.232.223:/root/Email-Classifier/.env`. Same for `.secrets/concept-classifier.key` if the cert ever changes. Next cron tick uses the new values.
+- **Refresh token re-bootstrap** — possibly once every few months, possibly never. Symptom: cron starts failing with auth errors in the log. Fix: `python tools/outlook_auth.py --bootstrap` on Mac (Vikram signs in once), then scp `.env` to droplet.
+- **Pausing the cron** — `ssh root@167.71.232.223 'crontab -r'` removes the schedule. To restore, re-install the cron entry.
+- **Tuning the classifier** — same as code changes (edit `config/domain_lists.py` or the prompt in `tools/classify_with_gemini.py`, push, pull on droplet).
+
+What does NOT need me:
+- The Mac being open or awake
+- The Mac being connected to the internet
+- Me logging into the droplet to "check on it"
+- Anything related to GitHub at runtime — after `git clone`, the droplet doesn't talk to GitHub again until I manually `git pull`
+- Microsoft refresh token expiry, *unless and until* it actually expires
+
 ## Tuning behavior
 
 Two knobs:
