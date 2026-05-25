@@ -1,73 +1,44 @@
-# Agent Instructions
+# Email Classifier — Project Notes
 
-You're working inside the **WAT framework** (Workflows, Agents, Tools). This architecture separates concerns so that probabilistic AI handles reasoning while deterministic code handles execution. That separation is what makes this system reliable.
+Shared WAT-framework rules, git policy, and deployment patterns live in the parent [../CLAUDE.md](../CLAUDE.md). This file holds only project-specific facts.
 
-## The WAT Architecture
+## What this project does
 
-**Layer 1: Workflows (The Instructions)**
-- Markdown SOPs stored in `workflows/`
-- Each workflow defines the objective, required inputs, which tools to use, expected outputs, and how to handle edge cases
-- Written in plain language, the same way you'd brief someone on your team
+Polls Vikram's Outlook business mailbox via Microsoft Graph every minute, classifies each unread email with Gemini 2.5 Flash into one of 7 buckets (Addressed to me / Urgent / Normal priority / Needs review / Promotions / Miscellaneous / BBG/Roxy), and moves it to the matching folder. Direct replacement for a previously-deployed n8n workflow.
 
-**Layer 2: Agents (The Decision-Maker)**
-- This is your role. You're responsible for intelligent coordination.
-- Read the relevant workflow, run tools in the correct sequence, handle failures gracefully, and ask clarifying questions when needed
-- You connect intent to execution without trying to do everything yourself
-- Example: If you need to pull data from a website, don't attempt it directly. Read `workflows/scrape_website.md`, figure out the required inputs, then execute `tools/scrape_single_site.py`
+See [workflows/classify_inbox.md](workflows/classify_inbox.md) for the per-cycle pipeline.
 
-**Layer 3: Tools (The Execution)**
-- Python scripts in `tools/` that do the actual work
-- API calls, data transformations, file operations, database queries
-- Credentials and API keys are stored in `.env`
-- These scripts are consistent, testable, and fast
+## Auth pattern (Microsoft Graph)
 
-**Why this matters:** When AI tries to handle every step directly, accuracy drops fast. If each step is 90% accurate, you're down to 59% success after just five steps. By offloading execution to deterministic scripts, you stay focused on orchestration and decision-making where you excel.
+Confidential client via certificate, not client secret. This is forced by the client tenant's policy that blocks client secrets across the whole tenant.
 
-## How to Operate
+The pattern: a self-signed cert is uploaded to the Azure app registration; locally, the private key sits in `.secrets/concept-classifier.key` referenced by `MS_CERT_PRIVATE_KEY_PATH` in `.env`. The cert authenticates the *app*. A refresh token (`MS_REFRESH_TOKEN`, populated by `tools/outlook_auth.py --bootstrap`) represents Vikram's consent to act on his mailbox.
 
-**1. Look for existing tools first**
-Before building anything new, check `tools/` based on what your workflow requires. Only create new scripts when nothing exists for that task.
+Why this is more than cosmetic: **public-client refresh tokens rotate and invalidate on every use** (Microsoft enforces single-use for public clients as a security default). Confidential-client refresh tokens are reusable — which is what makes the cloud cron work without state juggling. If you ever consider "just use a public client and skip the cert," the answer is no — we already tried, the cron breaks after the first run.
 
-**2. Learn and adapt when things fail**
-When you hit an error:
-- Read the full error message and trace
-- Fix the script and retest (if it uses paid API calls or credits, check with me before running again)
-- Document what you learned in the workflow (rate limits, timing quirks, unexpected behavior)
-- Example: You get rate-limited on an API, so you dig into the docs, discover a batch endpoint, refactor the tool to use it, verify it works, then update the workflow so this never happens again
+Full Azure setup steps in [workflows/outlook_setup.md](workflows/outlook_setup.md).
 
-**3. Keep workflows current**
-Workflows should evolve as you learn. When you find better methods, discover constraints, or encounter recurring issues, update the workflow. That said, don't create or overwrite workflows without asking unless I explicitly tell you to. These are your instructions and need to be preserved and refined, not tossed after one use.
+## Deployment
 
-## The Self-Improvement Loop
+Runs as a `cron` job on a DigitalOcean droplet (Ubuntu 24.04, $4/month, fires every minute via `* * * * *` wrapped in `flock`). The droplet pulls code from this public GitHub repo; secrets live only on the droplet (scp'd from local), never in the repo.
 
-Every failure is a chance to make the system stronger:
-1. Identify what broke
-2. Fix the tool
-3. Verify the fix works
-4. Update the workflow with the new approach
-5. Move on with a more robust system
+Standard deployment pattern is documented in the parent [../CLAUDE.md](../CLAUDE.md). Project-specific facts:
 
-This loop is how the framework improves over time.
+- VPS IP: `167.71.232.223` (DigitalOcean, NYC region)
+- Project path on VPS: `/root/Email-Classifier`
+- Cron log: `/root/inbox-cycle.log` on the VPS
+- Local secrets: `.env` + `.secrets/concept-classifier.key`
 
-## File Structure
+To watch cron in real time: `ssh root@167.71.232.223 'tail -f /root/inbox-cycle.log'`.
 
-**What goes where:**
-- **Deliverables**: Final outputs go to cloud services (Google Sheets, Slides, etc.) where I can access them directly
-- **Intermediates**: Temporary processing files that can be regenerated
+## Tuning behavior
 
-**Directory layout:**
-```
-.tmp/           # Temporary files (scraped data, intermediate exports). Regenerated as needed.
-tools/          # Python scripts for deterministic execution
-workflows/      # Markdown SOPs defining what to do and how
-.env            # API keys and environment variables (NEVER store secrets anywhere else)
-credentials.json, token.json  # Google OAuth (gitignored)
-```
+Two knobs:
+- **Domain lists** ([config/domain_lists.py](config/domain_lists.py)) — Buyer / Internal / Promotional / Miscellaneous / BBG-Roxy domain assignments. Edit, commit, push, then `git pull` on the VPS.
+- **Classifier prompt** (`SYSTEM_PROMPT` inside [tools/classify_with_gemini.py](tools/classify_with_gemini.py)) — keep the confidence-rules block in sync with the `<= 0.6 → Needs review` gate in [tools/apply_label.py](tools/apply_label.py).
 
-**Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
+## Operational gotchas
 
-## Bottom Line
-
-You sit between what I want (workflows) and what actually gets done (tools). Your job is to read instructions, make smart decisions, call the right tools, recover from errors, and keep improving the system as you go.
-
-Stay pragmatic. Stay reliable. Keep learning.
+- **Refresh token may eventually expire** (Microsoft uses a 90-day sliding window for confidential client refresh tokens; it should keep extending as long as the job runs daily, but isn't guaranteed forever). When it does, cron starts failing with auth errors. Fix: re-run `python tools/outlook_auth.py --bootstrap` locally (Vikram signs in once), then scp the updated `.env` to the droplet.
+- **Don't re-enable the old n8n workflow.** Both systems racing against the same inbox will double-process emails.
+- **The `Inbox Automation.json` file** is a historical artifact — the original n8n workflow export, kept for reference. Not used at runtime.
