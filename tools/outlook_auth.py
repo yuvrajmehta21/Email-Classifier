@@ -2,19 +2,29 @@
 """
 outlook_auth.py — Microsoft Graph access-token helper for Vikram's mailbox.
 
+Authenticates as a confidential client using a certificate (not a secret —
+the tenant policy blocks client secrets). Confidential-client refresh tokens
+can be reused, which is what lets the GitHub Actions cron job re-use the
+same MS_REFRESH_TOKEN across runs without rotation invalidating it.
+
 Two modes:
-  --bootstrap    One-time interactive sign-in. Opens the browser, captures the
-                 OAuth code, exchanges it for a refresh token, writes it to .env
-                 as MS_REFRESH_TOKEN. Run this once on the laptop after the
-                 client's tenant admin has granted consent.
+  --bootstrap    One-time interactive sign-in. Opens the browser, captures
+                 the OAuth code, exchanges it for a refresh token, writes it
+                 to .env as MS_REFRESH_TOKEN. Run this once on the laptop
+                 after the cert has been uploaded to Azure.
 
-  --print-token  Use the stored refresh token to mint a fresh access token and
-                 print it to stdout. Used by the other tools and by the cloud
-                 routine.
+  --print-token  Use the stored refresh token to mint a fresh access token
+                 and print it to stdout. Used by the other tools and by the
+                 GitHub Actions cron.
 
-Tenant: the client's Azure AD tenant ID goes in MS_TENANT_ID. Use the tenant
-GUID, not "common" — admin consent is per-tenant, and pinning the tenant
-prevents a stray personal-account login from succeeding.
+Required env vars (.env locally, GitHub Secrets in CI):
+  MS_TENANT_ID
+  MS_CLIENT_ID
+  MS_CERT_THUMBPRINT       — SHA-1 thumbprint of the cert uploaded to Azure
+  MS_CERT_PRIVATE_KEY      — PEM content of the private key (used in CI)
+       or
+  MS_CERT_PRIVATE_KEY_PATH — path to the .key file (convenient locally)
+  MS_REFRESH_TOKEN         — populated by --bootstrap, used by --print-token
 """
 
 from __future__ import annotations
@@ -37,28 +47,48 @@ ENV_PATH = ROOT / ".env"
 load_dotenv(ENV_PATH)
 
 CLIENT_ID = os.getenv("MS_CLIENT_ID", "")
-CLIENT_SECRET = os.getenv("MS_CLIENT_SECRET", "")  # optional — only needed for confidential apps
 TENANT_ID = os.getenv("MS_TENANT_ID", "")
+CERT_THUMBPRINT = os.getenv("MS_CERT_THUMBPRINT", "").replace(":", "").replace(" ", "").upper()
+CERT_PRIVATE_KEY_INLINE = os.getenv("MS_CERT_PRIVATE_KEY", "")
+CERT_PRIVATE_KEY_PATH = os.getenv("MS_CERT_PRIVATE_KEY_PATH", "")
 REFRESH_TOKEN = os.getenv("MS_REFRESH_TOKEN", "")
 
 REDIRECT_PORT = 8400
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
 SCOPES = ["Mail.ReadWrite", "Mail.Read", "User.Read"]
 # Do NOT add offline_access here — MSAL injects it automatically and rejects
-# it if passed explicitly. The refresh token comes back as long as the app
-# registration has offline_access among its granted delegated permissions.
+# it if passed explicitly.
 
 AUTHORITY = lambda: f"https://login.microsoftonline.com/{TENANT_ID}"
 
 
-def _build_app() -> msal.ClientApplication:
+def _load_private_key() -> str:
+    if CERT_PRIVATE_KEY_INLINE:
+        return CERT_PRIVATE_KEY_INLINE
+    if CERT_PRIVATE_KEY_PATH:
+        path = Path(CERT_PRIVATE_KEY_PATH)
+        if not path.is_absolute():
+            path = ROOT / path
+        return path.read_text()
+    sys.exit(
+        "Set MS_CERT_PRIVATE_KEY (PEM content) or MS_CERT_PRIVATE_KEY_PATH "
+        "(path to .key file) in the environment."
+    )
+
+
+def _build_app() -> msal.ConfidentialClientApplication:
     if not CLIENT_ID or not TENANT_ID:
-        sys.exit("MS_CLIENT_ID and MS_TENANT_ID must be set in .env")
-    if CLIENT_SECRET:
-        return msal.ConfidentialClientApplication(
-            CLIENT_ID, authority=AUTHORITY(), client_credential=CLIENT_SECRET
-        )
-    return msal.PublicClientApplication(CLIENT_ID, authority=AUTHORITY())
+        sys.exit("MS_CLIENT_ID and MS_TENANT_ID must be set in the environment.")
+    if not CERT_THUMBPRINT:
+        sys.exit("MS_CERT_THUMBPRINT must be set (40-char SHA-1 hex of the uploaded cert).")
+
+    credential = {
+        "private_key": _load_private_key(),
+        "thumbprint": CERT_THUMBPRINT,
+    }
+    return msal.ConfidentialClientApplication(
+        CLIENT_ID, authority=AUTHORITY(), client_credential=credential
+    )
 
 
 def bootstrap() -> None:
@@ -94,7 +124,6 @@ def bootstrap() -> None:
     print(f"Opening browser for sign-in. Listening on {REDIRECT_URI}")
     webbrowser.open(auth_url)
 
-    # handle_request blocks the worker thread; wait for it to set received[]
     while "code" not in received:
         pass
 
@@ -121,9 +150,11 @@ def get_access_token() -> str:
     result = app.acquire_token_by_refresh_token(REFRESH_TOKEN, scopes=SCOPES)
     if "access_token" not in result:
         sys.exit(f"Token refresh failed: {result}")
-    # Microsoft sometimes rotates the refresh token — persist if so.
+    # Confidential-client refresh tokens are reusable, so even if Microsoft
+    # returns a new one, the old one stays valid. Persist the newer one
+    # locally as a convenience, but only if we can write to .env (skipped in CI).
     new_rt = result.get("refresh_token")
-    if new_rt and new_rt != REFRESH_TOKEN:
+    if new_rt and new_rt != REFRESH_TOKEN and ENV_PATH.exists():
         set_key(str(ENV_PATH), "MS_REFRESH_TOKEN", new_rt)
     return result["access_token"]
 
