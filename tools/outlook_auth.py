@@ -17,13 +17,11 @@ Two modes:
                  and print it to stdout. Used by the other tools and by the
                  GitHub Actions cron.
 
-Required env vars (.env locally, GitHub Secrets in CI):
+Required env vars (in .env):
   MS_TENANT_ID
   MS_CLIENT_ID
   MS_CERT_THUMBPRINT       — SHA-1 thumbprint of the cert uploaded to Azure
-  MS_CERT_PRIVATE_KEY      — PEM content of the private key (used in CI)
-       or
-  MS_CERT_PRIVATE_KEY_PATH — path to the .key file (convenient locally)
+  MS_CERT_PRIVATE_KEY_PATH — path to the .key file (relative to project root)
   MS_REFRESH_TOKEN         — populated by --bootstrap, used by --print-token
 """
 
@@ -49,7 +47,6 @@ load_dotenv(ENV_PATH)
 CLIENT_ID = os.getenv("MS_CLIENT_ID", "")
 TENANT_ID = os.getenv("MS_TENANT_ID", "")
 CERT_THUMBPRINT = os.getenv("MS_CERT_THUMBPRINT", "").replace(":", "").replace(" ", "").upper()
-CERT_PRIVATE_KEY_INLINE = os.getenv("MS_CERT_PRIVATE_KEY", "")
 CERT_PRIVATE_KEY_PATH = os.getenv("MS_CERT_PRIVATE_KEY_PATH", "")
 REFRESH_TOKEN = os.getenv("MS_REFRESH_TOKEN", "")
 
@@ -63,17 +60,14 @@ AUTHORITY = lambda: f"https://login.microsoftonline.com/{TENANT_ID}"
 
 
 def _load_private_key() -> str:
-    if CERT_PRIVATE_KEY_INLINE:
-        return CERT_PRIVATE_KEY_INLINE
-    if CERT_PRIVATE_KEY_PATH:
-        path = Path(CERT_PRIVATE_KEY_PATH)
-        if not path.is_absolute():
-            path = ROOT / path
-        return path.read_text()
-    sys.exit(
-        "Set MS_CERT_PRIVATE_KEY (PEM content) or MS_CERT_PRIVATE_KEY_PATH "
-        "(path to .key file) in the environment."
-    )
+    if not CERT_PRIVATE_KEY_PATH:
+        sys.exit("MS_CERT_PRIVATE_KEY_PATH must be set in .env (path to the .key file).")
+    path = Path(CERT_PRIVATE_KEY_PATH)
+    if not path.is_absolute():
+        path = ROOT / path
+    if not path.exists():
+        sys.exit(f"Private key file not found: {path}")
+    return path.read_text()
 
 
 def _build_app() -> msal.ConfidentialClientApplication:

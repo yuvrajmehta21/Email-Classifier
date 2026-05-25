@@ -1,7 +1,7 @@
 # Classify Inbox — One Polling Cycle
 
 ## Objective
-Pull unread messages from Vikram's watched Outlook folder, classify each into one of seven buckets, and move it to the matching folder. This is what the Claude Code cloud routine fires on its 1-minute cron.
+Pull unread messages from Vikram's watched Outlook folder, classify each into one of seven buckets, and move it to the matching folder. This is what the VPS's cron job fires every minute.
 
 ## Required inputs (from `.env`)
 - `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_REFRESH_TOKEN` — Microsoft Graph auth (see `outlook_setup.md` for how these get there)
@@ -58,10 +58,11 @@ The buyer / internal / BBG-Roxy / always-promo / always-misc lists live in `conf
 The classifier prompt is in `tools/classify_with_gemini.py` (`SYSTEM_PROMPT`). Keep the confidence-rules block in sync with `apply_label.py`'s confidence gate (currently `<= 0.6` → Needs review).
 
 ## Scheduling
-Set up via the `/schedule` skill in Claude Code:
+Runs as a `cron` job on a small DigitalOcean droplet (see [NEXT_STEPS.md](../NEXT_STEPS.md) for setup):
 - Cron: `* * * * *` (every minute, matches the original n8n trigger)
-- Command: `python tools/run_inbox_cycle.py`
-- Routine env: copy values from local `.env`
+- Wrapped in `flock` to prevent overlapping runs if any single cycle exceeds 60s
+- Logs to `~/inbox-cycle.log` on the droplet
+- Secrets live in the droplet's `.env`, copied over via scp; private key file lives at `.secrets/concept-classifier.key`
 
 ## Verification (run locally before scheduling)
 ```bash

@@ -1,34 +1,39 @@
 # Next Steps
 
-Path from "code written" to "running on cron in the cloud."
+Deploy the classifier as a 1-minute cron job on a small VPS.
 
-The Azure AD app already exists (registered during the n8n setup, in Vikram's tenant, with admin consent granted). We reuse it instead of registering a new one. The Gemini API key is already in `.env`.
+## Why a VPS, not GitHub Actions / Claude routines / n8n
 
-## Setup
+- **GitHub Actions cron is unreliable for minute-level intervals.** GitHub doesn't guarantee on-time firing of scheduled workflows, especially `*/5` or faster. We tried; the scheduler simply did not fire our schedule. No setting or pricing tier fixes this.
+- **Claude routines have a 1-hour minimum cron.** Too slow for inbox triage.
+- **n8n was expensive per workflow call.** That was the reason to migrate off it.
 
-- [ ] **Pull credentials from the existing Azure app** — in the Azure Portal, open the app registration used for n8n and copy into `.env`:
-  - `MS_TENANT_ID` ← Directory (tenant) ID
-  - `MS_CLIENT_ID` ← Application (client) ID
-  - `MS_CLIENT_SECRET` ← if the n8n app was confidential and you still have the secret value saved. If not, generate a new secret under **Certificates & secrets → New client secret** (doesn't affect n8n; the app can have multiple secrets).
-- [ ] **Add our redirect URI to the existing app** — under **Authentication → Web → Redirect URIs**, *add* (don't replace) `http://localhost:8400/callback`. n8n's existing redirect URI keeps working. Only needed for the one-time bootstrap below; after that, the redirect URI is irrelevant.
-- [ ] **Verify the app's delegated permissions include all four scopes** — `Mail.ReadWrite`, `Mail.Read`, `User.Read`, `offline_access`. If `Mail.ReadWrite` is missing (n8n may have only needed read), add it and have an admin re-click **Grant admin consent**. If all four are already there with consent granted, skip this step.
-- [ ] **Bootstrap refresh token** — `.venv/bin/python tools/outlook_auth.py --bootstrap`. Vikram signs in once with his Outlook business account. Verify `MS_REFRESH_TOKEN` gets written to `.env`. (The n8n refresh token can't be reused — it was minted for n8n's client config.)
+A $4-6/month Linux VPS with plain cron is the boring, reliable answer: cron on a Unix box fires exactly when you tell it to.
 
-## Local verification (~10 min)
+## One-time setup (this is what's left to do)
 
-- [ ] **Fetch smoke test** — `.venv/bin/python tools/outlook_fetch_unread.py --limit 3` returns real unread messages.
-- [ ] **Dry-run pipeline** — `.venv/bin/python tools/run_inbox_cycle.py --dry-run --limit 3`. Inspect labels and confidences in the JSON summary.
-- [ ] **Live test** — send Vikram one email of each obvious bucket (urgent, promo, BBG/Roxy). Run `--limit 5`. Verify each lands in the right Outlook folder.
+- [ ] **Create a DigitalOcean account** (or any VPS provider — Hetzner / Linode / Vultr are all fine). New users typically get a credit that covers the first few months.
+- [ ] **Create a basic Ubuntu droplet** — cheapest tier ($4/month "Basic" with 1 GB RAM is plenty).
+- [ ] **SSH in** and run the setup commands (see below — git clone, install python deps, etc.).
+- [ ] **scp the secrets** from your laptop to the droplet: the `.env` file and the `.secrets/concept-classifier.key` file.
+- [ ] **Add the cron entry** — one line in `crontab -e`.
+- [ ] **Watch the first few runs** via `tail -f` on the log file.
 
-## Cutover from n8n
+## Cron entry
 
-- [ ] **Disable the n8n workflow** before scheduling the routine, so both don't fight over the same inbox.
+```cron
+* * * * * /usr/bin/flock -n /tmp/inbox-cycle.lock /home/<user>/Email-Classifier/.venv/bin/python /home/<user>/Email-Classifier/tools/run_inbox_cycle.py >> /home/<user>/inbox-cycle.log 2>&1
+```
 
-## Production
-
-- [ ] **Create the routine** via `/schedule` — cron `* * * * *` (every minute, matching the n8n workflow), command `python tools/run_inbox_cycle.py`. Copy all `.env` values into the routine's environment.
-- [ ] **Watch first ~3 runs** in `/schedule` list output for errors. Spot-check Outlook to confirm new mail gets sorted with the laptop off.
+`flock` prevents two cron-fired runs from stepping on each other if one happens to run long (>60s). Should be rare since runs are typically 5-15s.
 
 ## Maintenance
 
-- [ ] **Tune after ~1 week** — review the "Needs review" folder with Vikram. Promote recurring misclassifications into `config/domain_lists.py`.
+- [ ] **Tune after ~1 week** — review the "Needs review" folder with Vikram. Promote recurring misclassifications into [config/domain_lists.py](config/domain_lists.py), commit, push. On the droplet: `cd Email-Classifier && git pull`. Cron picks up the change on the next tick.
+- [ ] **Re-bootstrap if Microsoft eventually expires the refresh token (~90 day sliding window)** — runs start failing. Fix: re-run `python tools/outlook_auth.py --bootstrap` on your laptop (Vikram signs in once), then scp the updated `.env` to the droplet.
+
+## What was rolled back / removed
+
+- `.github/workflows/inbox-cycle.yml` — the failed GitHub Actions cron approach.
+- The dual-key support in `outlook_auth.py` (`MS_CERT_PRIVATE_KEY` inline content) — only existed for GitHub Secrets, no longer needed.
+- The corresponding GitHub repository secrets should be deleted manually (Settings → Secrets and variables → Actions → delete each one).
