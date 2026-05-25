@@ -1,0 +1,267 @@
+{
+  "name": "Inbox Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "output": "raw",
+        "filters": {
+          "foldersToInclude": [
+            "AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwAAAgEMAAAA"
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        -144
+      ],
+      "id": "b86fb664-7f3d-4ccd-a4fa-114b2aa4cd4b",
+      "name": "Microsoft Outlook Trigger",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ogJeLY8aslaghQFf",
+          "name": "Microsoft Vikram's Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0c3c5b5c-e0c9-45f1-916a-3e06578762aa",
+              "name": "sender_address",
+              "value": "={{ $json.from.emailAddress.address }}",
+              "type": "string"
+            },
+            {
+              "id": "20bb5af9-7082-4187-ba5b-ee287a0f8f66",
+              "name": "sender_domain",
+              "value": "={{ ($json.from.emailAddress.address || \"\").split(\"@\")[1]?.toLowerCase() || \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "2823878f-ddac-4827-8ca5-97bf9635352f",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "131e464f-eced-4707-b1a3-75f084ae75a1",
+              "name": "body",
+              "value": "={{ $json.bodyPreview }}",
+              "type": "string"
+            },
+            {
+              "id": "6503532d-c458-478a-ac23-1c21714cb75f",
+              "name": "thread_id",
+              "value": "={{ $json.conversationId }}",
+              "type": "string"
+            },
+            {
+              "id": "06485c1b-0390-44fe-9e1a-6a0429fa466b",
+              "name": "message_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            },
+            {
+              "id": "51ac939d-2f88-446d-af14-f8beb9ea02e8",
+              "name": "to",
+              "value": "={{ $json.toRecipients }}",
+              "type": "array"
+            },
+            {
+              "id": "9bb8459e-87ff-425b-959b-995c493dbec1",
+              "name": "cc",
+              "value": "={{ $json.ccRecipients }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -128,
+        -144
+      ],
+      "id": "0cfeb741-76ac-4f7e-9c63-28a5355e8e02",
+      "name": "Normalize"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Hardcoded domain list from Google Sheets\nconst DOMAIN_LIST = [\n  { domain: \"groupe-beaumanoir.com\", type: \"Buyer\" },\n  { domain: \"continuumba.com\", type: \"Buyer\" },\n  { domain: \"itxsi.com\", type: \"Buyer\" },\n  { domain: \"inditex.com\", type: \"Buyer\" },\n  { domain: \"lfsourcing.com\", type: \"Buyer\" },\n  { domain: \"montrosedel.com\", type: \"Buyer\" },\n  { domain: \"shoulder.com.br\", type: \"Buyer\" },\n  { domain: \"onequince.com\", type: \"Buyer\" },\n  { domain: \"deepwear.info\", type: \"Buyer\" },\n  { domain: \"voguesourcing.co.uk\", type: \"Buyer\" },\n  { domain: \"elcorteingles.es\", type: \"Buyer\" },\n  { domain: \"kuhl.com\", type: \"Buyer\" },\n  { domain: \"pullbear.com\", type: \"Buyer\" },\n  { domain: \"stradivarius.com\", type: \"Buyer\" },\n  { domain: \"tjx.com\", type: \"Buyer\" },\n  { domain: \"ovs.it\", type: \"Buyer\" },\n  { domain: \"conceptclothing.co.in\", type: \"Internal\" },\n  { domain: \"styleisland.com\", type: \"Internal\"}\n];\n\n// Always promotional - grows over time as client reports\nconst ALWAYS_PROMOTIONAL = [\n  \"nsdl.com\"\n];\n\n// Always miscellaneous (banking, compliance, etc) - grows over time\nconst ALWAYS_MISCELLANEOUS = [\n  \"nesl.co.in\",\n  \"wrapcompliance.org\"\n];\n\n// BBG/Roxy domains\nconst BBG_ROXY_DOMAINS = [\n  \"boardriders.com.tw\",\n  \"boardriders.co.jp\",\n  \"bhaus.co.il\",\n  \"actionbrandslatam.com\",\n  \"boardriders.mx\",\n  \"quiksilver.com.ar\",\n  \"olgar.com.tr\",\n  \"ccc.eu\",\n  \"brkcompany.kr\",\n  \"boardriders.co.za\"\n];\n\nconst VIKRAM_EMAIL = \"vikram@conceptclothing.co.in\";\nconst VIKRAM_NAMES = [\"vikram\", \"vikram mehta\", \"sir\"];\n\n// Get all emails from Normalize\nconst items = $input.all().map(i => i.json);\n\nconst results = items.map(norm => {\n  const senderDomain = (norm.sender_domain || \"\").toLowerCase().trim();\n\n  // Check hardcoded lists first (highest priority)\n  if (ALWAYS_PROMOTIONAL.includes(senderDomain)) {\n    return {\n      ...norm,\n      sender_type: \"Promotional\",\n      addressed_to_me: false\n    };\n  }\n\n  if (ALWAYS_MISCELLANEOUS.includes(senderDomain)) {\n    return {\n      ...norm,\n      sender_type: \"Miscellaneous\",\n      addressed_to_me: false\n    };\n  }\n\n  if (BBG_ROXY_DOMAINS.includes(senderDomain)) {\n    return {\n      ...norm,\n      sender_type: \"BBG_Roxy\",\n      addressed_to_me: false\n    };\n  }\n\n  // Match domain against business list\n  const match = DOMAIN_LIST.find(r => r.domain === senderDomain);\n\n  // Determine sender_type\n  let sender_type = \"Unknown\";\n  if (match) {\n    sender_type = match.type === \"Internal\" ? \"Internal\" : \"Buyer\";\n  }\n\n  // Check for internal employee emailing BBG/Roxy\n  if (sender_type === \"Internal\") {\n    const toList = Array.isArray(norm.to) ? norm.to : [];\n    const ccList = Array.isArray(norm.cc) ? norm.cc : [];\n    const allRecipients = [...toList, ...ccList];\n    \n    const hasBBGRecipient = allRecipients.some(x => {\n      const addr = x?.emailAddress?.address || \"\";\n      const recipientDomain = addr.split(\"@\")[1]?.toLowerCase().trim() || \"\";\n      return BBG_ROXY_DOMAINS.includes(recipientDomain);\n    });\n    \n    if (hasBBGRecipient) {\n      return {\n        ...norm,\n        sender_type: \"BBG_Roxy\",\n        addressed_to_me: false\n      };\n    }\n  }\n\n  // Addressed-to-me check: ONLY for Buyer or Internal\n  // Must have Vikram in To AND his name in first line of body\n  let addressed_to_me = false;\n  \n  if (sender_type === \"Buyer\" || sender_type === \"Internal\") {\n    const toList = Array.isArray(norm.to) ? norm.to : [];\n    const inTo = toList.some(x => {\n      const addr = x?.emailAddress?.address || \"\";\n      return addr.toLowerCase().trim() === VIKRAM_EMAIL.toLowerCase();\n    });\n\n    const firstLine = (norm.body || \"\")\n      .split(/\\r?\\n/)\n      .map(line => line.trim())\n      .find(line => line.length > 0) || \"\";\n\n    const nameInFirstLine = VIKRAM_NAMES.some(name =>\n      firstLine.toLowerCase().includes(name)\n    );\n\n    addressed_to_me = inTo && nameInFirstLine;\n  }\n\n  return {\n    ...norm,\n    sender_type,\n    addressed_to_me\n  };\n});\n\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -144
+      ],
+      "id": "de93b1c7-b340-4439-a96c-a8aa1efed1f6",
+      "name": "AI_input"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Get message_id from AI_input for this item\nconst messageId = $node[\"AI_input\"].json.message_id || null;\n\n// Extract raw text from AI output\nconst raw = $input.item.json.content.parts[0].text;\n\nlet ai;\ntry {\n  ai = JSON.parse(raw);\n} catch (e) {\n  return {\n  final_label: \"Needs review\",\n  confidence: 0,\n  messageId: messageId,\n  folderId: \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwZ1zJwAAAA==\"\n};\n}\n\nlet final_label = ai.bucket_label;\nconst confidence = Number(ai.confidence ?? 0);\n\nif (confidence <= 0.6) {\n  final_label = \"Needs review\";\n}\n\nconst allowed = [\n  \"Addressed to me\",\n  \"Urgent\",\n  \"Normal priority\",\n  \"Needs review\",\n  \"Miscellaneous\",\n  \"Promotions\",\n  \"BBG/Roxy\"\n];\n\nif (!allowed.includes(final_label)) {\n  final_label = \"Needs review\";\n}\n\nconst folderMap = {\n  \"Addressed to me\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwZ1zJQAAAA==\",\n  \"Urgent\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwZ1zJAAAAA==\",\n  \"Normal priority\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwZ1zJgAAAA==\",\n  \"Needs review\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwZ1zJwAAAA==\",\n  \"Miscellaneous\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwxusDAAAAA==\",\n  \"Promotions\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACwxusCwAAAA==\",\n  \"BBG/Roxy\": \"AQMkADU3OGI0MWQwLWRjZWEtNDA2OS04MmE5LTY3MDM5MGVmYzVmZAAuAAADkrEgFtpjc0qhSL6htCeiCQEAIkOvDngUhkaW3dzeF0QyMwACw77UNQAAAA==\"\n};\n\nconst folderId = folderMap[final_label];\n\nreturn {\n  ...ai,\n  final_label,\n  confidence,\n  messageId,\n  folderId\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        -144
+      ],
+      "id": "cbcb324e-588a-4756-9fec-fd81958ac94f",
+      "name": "mapping"
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "messageId": {
+          "__rl": true,
+          "value": "={{ $json.messageId }}",
+          "mode": "id"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "={{ $json.folderId }}",
+          "mode": "id"
+        }
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        752,
+        -144
+      ],
+      "id": "c3e0cb63-6f48-4848-81b8-0dd3b322079f",
+      "name": "Move to folder",
+      "webhookId": "c94d6f23-84db-4713-926b-a49bdd56bc12",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "ogJeLY8aslaghQFf",
+          "name": "Microsoft Vikram's Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=sender_type: {{ $json.sender_type }}\naddressed_to_me: {{ $json.addressed_to_me }}\n\nSender: {{ $json.sender_address }}\nDomain: {{ $json.sender_domain }}\n\nSubject: {{ $json.subject }}\n\nBody:\n{{ $json.body }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "You are an email triage classifier for a garment manufacturing business owner. Your task is to classify each email into EXACTLY ONE of the following folders:\n- \"Addressed to me\"\n- \"Urgent\"\n- \"Normal priority\"\n- \"Needs review\"\n- \"Promotions\"\n- \"Miscellaneous\"\n- \"BBG/Roxy\"\n\nYou will receive structured input fields such as:\n- message_id\n- sender_type (Buyer | Internal | Unknown | Promotional | Miscellaneous | BBG_Roxy)\n- addressed_to_me (true | false)\n- subject\n- body\n- to\n- cc\n\nYou MUST return ONLY valid JSON. No markdown. No explanations. No extra keys.\n\n--------------------\nOUTPUT SCHEMA\n--------------------\n{\n  \"bucket_label\": \"Addressed to me|Urgent|Normal priority|Needs review|Promotions|Miscellaneous|BBG/Roxy\",\n  \"trigger\": \"addressed_to_me|urgent_business|routine_business|promotional|personal_admin|bbg_roxy|none\",\n  \"confidence\": 0.0-1.0\n}\n\n--------------------\nCONFIDENCE DEFINITION\n--------------------\nConfidence represents how certain you are about the classification.\n- 1.0 = completely certain about the label\n- 0.5 = unsure, could go either way\n- 0.0 = no idea at all\n\nAssign confidence based on how clearly the email matches the rules below. If the email is ambiguous or could fit more than one category, assign a lower confidence.\n\n--------------------\nCLASSIFICATION RULES (STRICT)\n--------------------\n\n1) ADDRESSED TO ME (HIGHEST PRIORITY)\nIf addressed_to_me = true:\n- bucket_label MUST be \"Addressed to me\"\n- trigger MUST be \"addressed_to_me\"\n- Confidence should be high (>= 0.8)\n\nNote: Only emails from Buyer or Internal sender_type can have addressed_to_me = true.\n\n2) URGENT\nIf the email requires immediate attention or action, and NOT addressed_to_me:\n\nExamples include but are NOT limited to:\n- Buyer asking for prices, quotations, or urgent approvals\n- Staff asking for costing approval or critical sign-offs\n- Quality issues or compliance concerns from buyers\n- Time-sensitive requests with explicit deadlines\n- Escalations or follow-ups marked urgent\n- Someone being aggressive/rude/pressurizing\n- Banking emails with urgent language (OTP expiring, immediate action required)\n\nUse your judgment based on:\n- Tone and language (urgent, ASAP, immediate, deadline, critical)\n- Sender importance (Buyer emails are generally higher priority than Unknown)\n- Whether delayed response would harm business relationships\n\nThen:\n- bucket_label = \"Urgent\"\n- trigger = \"urgent_business\"\n- Confidence >= 0.7\n\n3) NORMAL PRIORITY\nIf the email is routine business communication that doesn't require immediate action:\n\nExamples:\n- Status updates, confirmations, FYIs\n- Routine order details, shipping notifications\n- Internal coordination that's not time-sensitive\n- General buyer inquiries without deadlines\n- Business correspondence that can be handled within 24-48 hours\n\nThen:\n- bucket_label = \"Normal priority\"\n- trigger = \"routine_business\"\n- Confidence > 0.6\n\n4) NEEDS REVIEW (SAFE FALLBACK)\nIf the email is business-related but ambiguous, unclear, or you are uncertain about urgency:\n- bucket_label = \"Needs review\"\n- trigger = \"none\"\n- Confidence <= 0.6\n\n5) PROMOTIONS\nCRITICAL: If sender_type = \"Promotional\", this email MUST go to Promotions folder with confidence = 1.0.\n\nOtherwise, if sender_type is \"Unknown\" or the email is clearly promotional:\n- Marketing emails from brands, retailers, services\n- Promotional offers, discounts, newsletters\n- Event invitations for promotional purposes\n- Sales pitches from unknown vendors\n- Emails with heavy marketing language, promotional imagery, or \"unsubscribe\" links\n\nThen:\n- bucket_label = \"Promotions\"\n- trigger = \"promotional\"\n- Confidence >= 0.7 (use 1.0 if sender_type = \"Promotional\")\n\n6) MISCELLANEOUS\nCRITICAL: If sender_type = \"Miscellaneous\", this email MUST go to Miscellaneous folder with confidence = 1.0.\n\nOtherwise, if sender_type is \"Unknown\" or the email is clearly personal/administrative:\n- Verification codes, password resets, OTP (non-urgent)\n- Personal notifications (Uber, food delivery, ride confirmations)\n- App notifications, account alerts\n- Social media notifications\n- Banking statements, transaction confirmations (non-urgent)\n- Personal correspondence unrelated to garment business\n\nThen:\n- bucket_label = \"Miscellaneous\"\n- trigger = \"personal_admin\"\n- Confidence >= 0.7 (use 1.0 if sender_type = \"Miscellaneous\")\n\n7) BBG/ROXY\nCRITICAL: If sender_type = \"BBG_Roxy\", this email MUST go to BBG/Roxy folder with confidence = 1.0.\n\nThis folder is for emails from specific Boardriders/BBG/Roxy regional offices.\n\nThen:\n- bucket_label = \"BBG/Roxy\"\n- trigger = \"bbg_roxy\"\n- Confidence = 1.0\n\n--------------------\nCONFIDENCE RULES (STRICT)\n--------------------\nThese confidence rules are MANDATORY. Do not break them.\n\n- If bucket_label = \"Addressed to me\" → confidence MUST be >= 0.8\n- If bucket_label = \"Urgent\" → confidence MUST be >= 0.7\n- If bucket_label = \"Normal priority\" → confidence MUST be > 0.6\n- If bucket_label = \"Needs review\" → confidence MUST be <= 0.6\n- If bucket_label = \"Promotions\" → confidence MUST be >= 0.7 (1.0 if sender_type = \"Promotional\")\n- If bucket_label = \"Miscellaneous\" → confidence MUST be >= 0.7 (1.0 if sender_type = \"Miscellaneous\")\n- If bucket_label = \"BBG/Roxy\" → confidence MUST be 1.0\n\nDo NOT assign a bucket_label that conflicts with these confidence ranges.\nIf you are unsure, assign a lower confidence and use \"Needs review\".\n\n--------------------\nDECISION GUIDELINES\n--------------------\n\nURGENT vs NORMAL PRIORITY:\nAsk: \"Does this require action today or will relationships/business suffer if delayed?\"\n- Yes → Urgent\n- No → Normal priority\n\nNORMAL PRIORITY vs NEEDS REVIEW:\nAsk: \"Is the intent and required action clear?\"\n- Yes → Normal priority\n- Unclear → Needs review\n\nPROMOTIONS vs MISCELLANEOUS:\nAsk: \"Is this trying to sell something?\"\n- Yes → Promotions\n- No, it's personal/admin → Miscellaneous\n\nURGENT vs MISCELLANEOUS (for banking/personal):\nAsk: \"Does this require immediate action despite being personal?\"\n- Yes (OTP expiring, urgent verification) → Urgent\n- No (statement, routine notification) → Miscellaneous\n\n--------------------\nIMPORTANT CONSTRAINTS\n--------------------\n- Choose EXACTLY ONE bucket_label\n- Choose EXACTLY ONE trigger\n- Do NOT invent new triggers\n- sender_type = \"Promotional\", \"Miscellaneous\", or \"BBG_Roxy\" ALWAYS overrides content-based classification with confidence = 1.0\n- Banking emails with urgent language CAN go to Urgent if they require immediate action\n- When in doubt between Urgent and Normal, prefer Normal and use a mid-range confidence (0.7-0.8)\n- When genuinely uncertain, prefer \"Needs review\" over guessing\n\nThis system balances responsiveness with safety. Trust your judgment while respecting the confidence thresholds.",
+          "temperature": 0
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        -144
+      ],
+      "id": "9b709983-ba55-4982-9d9b-e5eb8ac8927b",
+      "name": "AI classifier",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "HoynAGmJ9LwJKGYv",
+          "name": "Yuvraj gemini"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Microsoft Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize": {
+      "main": [
+        [
+          {
+            "node": "AI_input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI_input": {
+      "main": [
+        [
+          {
+            "node": "AI classifier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "mapping": {
+      "main": [
+        [
+          {
+            "node": "Move to folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI classifier": {
+      "main": [
+        [
+          {
+            "node": "mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "0d9e02a5-b728-4632-8476-b0f5329e3777",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "214cb1b7958d918250e403192b171920966a2a420a99ed06635dd85f0aaa134b"
+  },
+  "id": "09-P4qMv-1rp48TEFQXwn",
+  "tags": []
+}

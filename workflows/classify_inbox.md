@@ -1,0 +1,79 @@
+# Classify Inbox — One Polling Cycle
+
+## Objective
+Pull unread messages from Vikram's watched Outlook folder, classify each into one of seven buckets, and move it to the matching folder. This is what the Claude Code cloud routine fires on its 1-minute cron.
+
+## Required inputs (from `.env`)
+- `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_REFRESH_TOKEN` — Microsoft Graph auth (see `outlook_setup.md` for how these get there)
+- `MS_CLIENT_SECRET` — only if the Azure app was registered as confidential
+- `GEMINI_API_KEY` — for the classifier
+
+## Tool sequence
+
+The orchestrator script does all of this in one process:
+
+```
+python tools/run_inbox_cycle.py
+```
+
+Add `--dry-run` to classify without moving. Add `--limit N` to cap messages per cycle (default 25).
+
+Under the hood, per message:
+1. `tools/outlook_fetch_unread.py` — `GET /me/mailFolders/{SOURCE_FOLDER_ID}/messages?$filter=isRead eq false`
+2. `tools/normalize_email.py` — flatten Graph fields
+3. `tools/pre_classify.py` — deterministic rules (domain lists, addressed_to_me)
+4. `tools/classify_with_gemini.py` — Gemini 2.5 Flash, JSON output
+5. `tools/apply_label.py` — confidence gate (`<= 0.6` → "Needs review"), label → folder_id lookup
+6. `tools/outlook_move_message.py` — `POST /me/messages/{id}/move`
+
+Idempotency: processed message IDs are appended to `.tmp/seen_message_ids.json` (capped at 5000). A message that somehow re-appears unread isn't reprocessed.
+
+## Expected output
+JSON summary on stdout:
+```json
+{
+  "started_at": "...",
+  "fetched": 12,
+  "new": 12,
+  "processed": 12,
+  "errors": 0,
+  "results": [ { "message_id": "...", "final_label": "Urgent", "confidence": 0.85, "moved": true }, ... ]
+}
+```
+Exit code is 0 on full success, 1 if any message errored.
+
+## Edge cases & known behavior
+
+- **Gemini returns invalid JSON** — `classify_with_gemini.py` falls back to `bucket_label="Needs review", confidence=0`. The confidence gate then routes to "Needs review" deterministically.
+- **Confidence ≤ 0.6** — overrides whatever label Gemini chose. Forced to "Needs review".
+- **Internal sender writing to a BBG/Roxy address** — `pre_classify.py` reclassifies these to `BBG_Roxy` regardless of body content (see the recipient-domain check).
+- **Promotional / Miscellaneous / BBG_Roxy hard overrides** — domains in `config/domain_lists.py` bypass the AI; the system prompt forces `confidence=1.0` for these.
+- **`addressed_to_me`** — only fires for `Buyer` or `Internal` senders, and requires both `vikram@conceptclothing.co.in` in `To` *and* one of `["vikram", "vikram mehta", "sir"]` in the first non-empty body line.
+- **Refresh token rotation** — Microsoft sometimes returns a new refresh token. `outlook_auth.py` writes it back to `.env`. In the cloud routine, the routine's environment is the source of truth; rotation handling there is to update the routine's secret if a token error appears in logs.
+
+## Updating the domain lists
+The buyer / internal / BBG-Roxy / always-promo / always-misc lists live in `config/domain_lists.py`. Edit and commit. No runtime reload — the next routine cycle picks up the change.
+
+## Updating the prompt
+The classifier prompt is in `tools/classify_with_gemini.py` (`SYSTEM_PROMPT`). Keep the confidence-rules block in sync with `apply_label.py`'s confidence gate (currently `<= 0.6` → Needs review).
+
+## Scheduling
+Set up via the `/schedule` skill in Claude Code:
+- Cron: `* * * * *` (every minute, matches the original n8n trigger)
+- Command: `python tools/run_inbox_cycle.py`
+- Routine env: copy values from local `.env`
+
+## Verification (run locally before scheduling)
+```bash
+# 1. Auth works:
+python tools/outlook_auth.py --print-token | head -c 40
+
+# 2. Fetch a few unread messages:
+python tools/outlook_fetch_unread.py --limit 3
+
+# 3. Full pipeline, no moves:
+python tools/run_inbox_cycle.py --dry-run --limit 3
+
+# 4. Real run on a single test email you sent yourself:
+python tools/run_inbox_cycle.py --limit 1
+```
