@@ -1,9 +1,11 @@
 name: Inbox Classifier
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
+  schedule:
+    # Off-peak minutes to avoid the minute-0/5/10 stampede that GitHub
+    # heavily throttles on free public repos. Same ~5-min cadence overall.
+    - cron: '2,7,12,17,22,27,32,37,42,47,52,57 * * * *'
 
 jobs:
   classify:
