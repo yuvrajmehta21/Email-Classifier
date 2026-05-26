@@ -4,9 +4,11 @@ Shared WAT-framework rules, git policy, and deployment patterns live in the pare
 
 ## What this project does
 
-Polls Vikram's Outlook business mailbox via Microsoft Graph every minute, classifies each unread email with Gemini 2.5 Flash into one of 7 buckets (Addressed to me / Urgent / Normal priority / Needs review / Promotions / Miscellaneous / BBG/Roxy), and moves it to the matching folder. Direct replacement for a previously-deployed n8n workflow.
+Two scheduled jobs run against Vikram's Outlook mailbox:
 
-See [workflows/classify_inbox.md](workflows/classify_inbox.md) for the per-cycle pipeline.
+1. **Per-minute classifier** — polls unread mail, classifies each with Gemini 2.5 Flash into one of 7 buckets (Addressed to me / Urgent / Normal priority / Needs review / Promotions / Miscellaneous / BBG/Roxy), and moves it to the matching folder. Direct replacement for a previously-deployed n8n workflow. See [workflows/classify_inbox.md](workflows/classify_inbox.md).
+
+2. **Daily 8 AM IST digest** — reads emails Vikram has moved back into his Inbox (his curated must-deal-with set), summarizes each in 3 bullets via Gemini, groups by which listed employee the email involves, and sends the digest to Vikram from his own mailbox. See [workflows/daily_summary.md](workflows/daily_summary.md).
 
 ## Auth pattern (Microsoft Graph)
 
@@ -24,12 +26,19 @@ Runs as a `cron` job on a DigitalOcean droplet (Ubuntu 24.04, $4/month, fires ev
 
 Standard deployment pattern is documented in the parent [../CLAUDE.md](../CLAUDE.md). Project-specific facts:
 
-- VPS IP: `167.71.232.223` (DigitalOcean, NYC region)
+- VPS IP: `167.71.232.223` (DigitalOcean)
 - Project path on VPS: `/root/Email-Classifier`
-- Cron log: `/root/inbox-cycle.log` on the VPS
+- Cron logs on the VPS:
+  - `/root/inbox-cycle.log` — per-minute classifier
+  - `/root/daily-summary.log` — 8 AM IST digest
+- Cron lines on the VPS:
+  - `* * * * *` (every minute) — classifier
+  - `30 2 * * *` if droplet TZ is UTC, or `0 8 * * *` if droplet TZ is IST — daily digest at 8 AM IST. Verify with `ssh root@167.71.232.223 date` before installing.
 - Local secrets: `.env` + `.secrets/concept-classifier.key`
 
-To watch cron in real time: `ssh root@167.71.232.223 'tail -f /root/inbox-cycle.log'`.
+To watch cron in real time:
+- Classifier: `ssh root@167.71.232.223 'tail -f /root/inbox-cycle.log'`
+- Digest: `ssh root@167.71.232.223 'tail -f /root/daily-summary.log'`
 
 ## What needs me (vs. what runs on its own)
 
@@ -50,9 +59,13 @@ What does NOT need me:
 
 ## Tuning behavior
 
-Two knobs:
-- **Domain lists** ([config/domain_lists.py](config/domain_lists.py)) — Buyer / Internal / Promotional / Miscellaneous / BBG-Roxy domain assignments. Edit, commit, push, then `git pull` on the VPS.
+Knobs:
+- **Domain lists** ([config/domain_lists.py](config/domain_lists.py)) — Buyer / Internal / Promotional / Miscellaneous / BBG-Roxy domain assignments. Used by the per-minute classifier.
 - **Classifier prompt** (`SYSTEM_PROMPT` inside [tools/classify_with_gemini.py](tools/classify_with_gemini.py)) — keep the confidence-rules block in sync with the `<= 0.6 → Needs review` gate in [tools/apply_label.py](tools/apply_label.py).
+- **Employee list** ([config/employees.py](config/employees.py)) — names whose emails get grouped in the daily digest. Vikram is intentionally excluded.
+- **Summarizer prompt** (`SYSTEM_PROMPT` inside [tools/summarize_with_gemini.py](tools/summarize_with_gemini.py)) — controls the 3-bullet style of the daily digest.
+
+All edits follow the same flow: edit locally, commit, push, then `git pull` on the VPS. No restart needed; the next cron tick picks up the change.
 
 ## Operational gotchas
 

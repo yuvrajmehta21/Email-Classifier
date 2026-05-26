@@ -52,7 +52,7 @@ REFRESH_TOKEN = os.getenv("MS_REFRESH_TOKEN", "")
 
 REDIRECT_PORT = 8400
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/callback"
-SCOPES = ["Mail.ReadWrite", "Mail.Read", "User.Read"]
+SCOPES = ["Mail.ReadWrite", "Mail.Read", "Mail.Send", "User.Read"]
 # Do NOT add offline_access here — MSAL injects it automatically and rejects
 # it if passed explicitly.
 

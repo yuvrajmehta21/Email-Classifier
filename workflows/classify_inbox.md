@@ -42,6 +42,10 @@ JSON summary on stdout:
 ```
 Exit code is 0 on full success, 1 if any message errored.
 
+## Carve-out: daily-summary digests stay in Inbox
+
+Emails whose subject starts with `Daily Inbox Summary` are sent by the companion daily-summary tool (see [daily_summary.md](daily_summary.md)) and the client wants them to remain visible in the Inbox until he reads them. The orchestrator filters these out after `fetch_unread` and before classification — they are neither classified nor moved. The `skipped` count in the JSON output reflects how many were filtered out this cycle. Once Vikram reads the digest it stops matching `isRead eq false` and is no longer fetched.
+
 ## Edge cases & known behavior
 
 - **Gemini returns invalid JSON** — `classify_with_gemini.py` falls back to `bucket_label="Needs review", confidence=0`. The confidence gate then routes to "Needs review" deterministically.

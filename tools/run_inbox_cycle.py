@@ -31,6 +31,13 @@ from tools.pre_classify import pre_classify  # noqa: E402
 SEEN_PATH = ROOT / ".tmp" / "seen_message_ids.json"
 SEEN_LIMIT = 5000  # cap so the file never grows unbounded
 
+# Emails whose subject starts with this prefix are left untouched in the
+# Inbox — they are the daily-summary digests sent by run_daily_summary.py,
+# and the client wants them to remain visible in the Inbox until he reads
+# them. Once read, they no longer match `isRead eq false` and the classifier
+# won't see them again anyway.
+SKIP_SUBJECT_PREFIX = "Daily Inbox Summary"
+
 
 def _load_seen() -> list[str]:
     if not SEEN_PATH.exists():
@@ -52,6 +59,8 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
 
     raw_messages = fetch_unread(limit)
     new_messages = [m for m in raw_messages if m.get("id") not in seen]
+    skipped = [m for m in new_messages if (m.get("subject") or "").startswith(SKIP_SUBJECT_PREFIX)]
+    new_messages = [m for m in new_messages if not (m.get("subject") or "").startswith(SKIP_SUBJECT_PREFIX)]
 
     results = []
     for msg in new_messages:
@@ -91,6 +100,7 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
         "started_at": started,
         "fetched": len(raw_messages),
         "new": len(new_messages),
+        "skipped": len(skipped),
         "processed": len([r for r in results if "error" not in r]),
         "errors": len([r for r in results if "error" in r]),
         "results": results,
