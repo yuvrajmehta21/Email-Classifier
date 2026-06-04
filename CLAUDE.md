@@ -8,7 +8,7 @@ Two scheduled jobs run against Vikram's Outlook mailbox:
 
 1. **Per-minute classifier** — polls unread mail, classifies each with Gemini 2.5 Flash into one of 7 buckets (Addressed to me / Urgent / Normal priority / Needs review / Promotions / Miscellaneous / BBG/Roxy), and moves it to the matching folder. Direct replacement for a previously-deployed n8n workflow. See [workflows/classify_inbox.md](workflows/classify_inbox.md).
 
-2. **Daily 8 AM IST digest** — reads emails Vikram has moved back into his Inbox (his curated must-deal-with set), summarizes each in 3 bullets via Gemini, groups by which listed employee the email involves, and sends the digest to Vikram from his own mailbox. See [workflows/daily_summary.md](workflows/daily_summary.md).
+2. **3x daily digest (8 AM / 12 PM / 4 PM IST)** — reads emails Vikram has moved back into his Inbox (his curated must-deal-with set), summarizes each in 3 bullets via Gemini, groups by which listed employee the email involves, and sends the digest to Vikram from his own mailbox. See [workflows/daily_summary.md](workflows/daily_summary.md).
 
 ## Auth pattern (Microsoft Graph)
 
@@ -33,7 +33,7 @@ Standard deployment pattern is documented in the parent [../CLAUDE.md](../CLAUDE
   - `/root/daily-summary.log` — 8 AM IST digest
 - Cron lines on the VPS:
   - `* * * * *` (every minute) — classifier
-  - `30 2 * * *` if droplet TZ is UTC, or `0 8 * * *` if droplet TZ is IST — daily digest at 8 AM IST. Verify with `ssh root@167.71.232.223 date` before installing.
+  - `30 2,6,10 * * *` if droplet TZ is UTC, or `0 8,12,16 * * *` if droplet TZ is IST — digest 3x daily at 8 AM / 12 PM / 4 PM IST. Verify with `ssh root@167.71.232.223 date` before installing.
 - Local secrets: `.env` + `.secrets/concept-classifier.key`
 
 To watch cron in real time:
