@@ -150,7 +150,7 @@ def run(limit: int, dry_run: bool) -> dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=100, help="Max read messages to summarize.")
+    ap.add_argument("--limit", type=int, default=200, help="Max read messages to summarize.")
     ap.add_argument("--dry-run", action="store_true", help="Build the summary but do not send.")
     args = ap.parse_args()
 
