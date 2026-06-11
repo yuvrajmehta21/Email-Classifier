@@ -76,7 +76,7 @@ If addressed_to_me = true:
 - trigger MUST be "addressed_to_me"
 - Confidence should be high (>= 0.8)
 
-Note: Only emails from Buyer or Internal sender_type can have addressed_to_me = true.
+Note: The precomputed addressed_to_me = true flag is only ever set for Buyer or Internal sender_type. However, there is ONE additional content-based path to the "Addressed to me" label even when addressed_to_me = false and sender_type = Unknown: a genuine personal booked-trip email addressed to Vikram (see the TRAVEL / PERSONAL TRIP rules below). No other Unknown-sender email may use "Addressed to me".
 
 2) URGENT
 If the email requires immediate attention or action, and NOT addressed_to_me:
@@ -162,6 +162,33 @@ Then:
 - trigger = "bbg_roxy"
 - Confidence = 1.0
 
+8) TRAVEL / PERSONAL TRIP
+This applies ONLY to travel, hotel, airline, resort, or booking-related emails (e.g. hotels, airlines, travel agents, concierge/GM correspondence). Use it to separate marketing from a real trip Vikram has booked.
+
+First decide promotional vs genuine trip:
+
+a) PROMOTIONAL TRAVEL — marketing with no specific booking of Vikram's: offers, discounts, seasonal deals, loyalty/membership marketing, "book now", newsletters, generic property showcases, "unsubscribe" footers.
+   - bucket_label = "Promotions"
+   - trigger = "promotional"
+   - Confidence >= 0.7
+
+b) GENUINE BOOKED TRIP — about an actual reservation/stay/flight Vikram has: booking or reservation confirmations, itineraries, check-in details, room/flight specifics, or a hotel GM/manager/concierge personally coordinating his stay.
+   Then check whether it is personally addressed to Vikram. This is decided by the SALUTATION/BODY, NOT by the To field (his address is in To on almost every email to his mailbox, so being in To proves nothing here):
+     - TRUE only if the greeting or body names him personally — "Dear Mr. Mehta", "Dear Vikram", "Hi Vikram", "Mr. Mehta", etc.
+     - FALSE if the greeting is generic — "Dear Guest", "Dear Customer", "Dear Valued Member", no name at all, or only a booking reference — even if his email is in the To list.
+   - If personally addressed to him:
+       - bucket_label = "Addressed to me"
+       - trigger = "addressed_to_me"
+       - Confidence >= 0.8
+   - If NOT personally addressed (e.g. automated "Dear Guest", "Dear Customer", no name, only a booking reference):
+       - bucket_label = "Miscellaneous"
+       - trigger = "personal_admin"
+       - Confidence >= 0.7
+
+c) If you genuinely cannot tell whether a travel email is promotional or a real booked trip, do NOT guess — use "Needs review" with confidence <= 0.6.
+
+This TRAVEL rule overrides the generic Unknown-sender Promotions/Miscellaneous rules for travel context, but it NEVER overrides the hard sender_type forces (Promotional / Miscellaneous / BBG_Roxy with confidence = 1.0).
+
 --------------------
 CONFIDENCE RULES (STRICT)
 --------------------
@@ -216,12 +243,23 @@ IMPORTANT CONSTRAINTS
 This system balances responsiveness with safety. Trust your judgment while respecting the confidence thresholds."""
 
 
+def _recipient_addrs(recipients: list) -> str:
+    addrs = []
+    for r in recipients or []:
+        addr = ((r or {}).get("emailAddress", {}) or {}).get("address", "") or ""
+        if addr:
+            addrs.append(addr)
+    return ", ".join(addrs)
+
+
 def _user_message(item: dict) -> str:
     return (
         f"sender_type: {item.get('sender_type','')}\n"
         f"addressed_to_me: {str(item.get('addressed_to_me', False)).lower()}\n\n"
         f"Sender: {item.get('sender_address','')}\n"
         f"Domain: {item.get('sender_domain','')}\n\n"
+        f"To: {_recipient_addrs(item.get('to', []))}\n"
+        f"Cc: {_recipient_addrs(item.get('cc', []))}\n\n"
         f"Subject: {item.get('subject','')}\n\n"
         f"Body:\n{item.get('body','')}"
     )
