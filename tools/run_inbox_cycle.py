@@ -38,6 +38,16 @@ SEEN_LIMIT = 5000  # cap so the file never grows unbounded
 # won't see them again anyway.
 SKIP_SUBJECT_PREFIX = "Daily Inbox Summary"
 
+# sender_types whose label the classifier prompt already forces to a fixed
+# bucket with confidence 1.0. The Gemini call would be wasted for these, so
+# the cycle assigns the decision directly and skips the API entirely.
+# Keep in sync with the CRITICAL sender_type rules in classify_with_gemini.py.
+DETERMINISTIC_SENDER_TYPES = {
+    "Promotional": ("Promotions", "promotional"),
+    "Miscellaneous": ("Miscellaneous", "personal_admin"),
+    "BBG_Roxy": ("BBG/Roxy", "bbg_roxy"),
+}
+
 
 def _load_seen() -> list[str]:
     if not SEEN_PATH.exists():
@@ -67,7 +77,12 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
         try:
             norm = normalize(msg)
             pre = pre_classify(norm)
-            ai = classify(pre)
+            forced = DETERMINISTIC_SENDER_TYPES.get(pre.get("sender_type"))
+            if forced:
+                label, trigger = forced
+                ai = {**pre, "bucket_label": label, "trigger": trigger, "confidence": 1.0}
+            else:
+                ai = classify(pre)
             decided = apply_label(ai)
 
             move_target = decided["folder_id"]
@@ -82,6 +97,7 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
                 "sender_type": decided.get("sender_type"),
                 "addressed_to_me": decided.get("addressed_to_me"),
                 "model_label": ai.get("bucket_label"),
+                "gemini_called": forced is None,
                 "final_label": decided["final_label"],
                 "confidence": decided["confidence"],
                 "moved": not dry_run,
