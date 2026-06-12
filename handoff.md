@@ -33,9 +33,9 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
   pre-classifies by domain → Gemini → confidence gate → moves to folder.
 - **Cert-based Graph auth** — confidential client, reusable refresh token. Verified
   minting tokens on both Mac and droplet.
-- **3× daily digest** — live on the droplet, `30 4,6,10 * * *` (UTC) = **10 AM /
-  12 PM / 4 PM IST**. Sends from Vikram to Vikram. Verified: real sends of 47 and
-  100 emails, 0 errors.
+- **3× daily digest** — live on the droplet (schedule and cron lines in
+  [CLAUDE.md](CLAUDE.md)). Sends from Vikram to Vikram. Verified: real sends of 47
+  and 100 emails, 0 errors.
 - **Classifier carve-out** — emails whose subject starts with `Daily Inbox Summary`
   are left in the Inbox (not classified/moved), so the digest itself stays visible.
 - **Digest self-skip** — the digest filters out prior `Daily Inbox Summary` emails
@@ -57,8 +57,9 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
   4,000 chars (with a truncation marker) before the Gemini call; reply chains quote
   the whole thread below the newest message, so the tail is stale text. Verified on a
   real 8.3k-char thread: bullets equivalent to the untruncated run.
-- **CLAUDE.md schedule drift fixed** (commit `dfd6710`) — all "8 AM" references now
-  say 10 AM / 12 PM / 4 PM IST, matching the droplet cron (`30 4,6,10` UTC).
+- **CLAUDE.md schedule drift fixed** (commit `dfd6710`) — docs now match the droplet
+  cron. The schedule's single home is CLAUDE.md; this file deliberately doesn't
+  repeat it.
 
 ### 🔜 NOT STARTED / parked
 - **Explicit Gemini prompt caching** — DROPPED by Yuvraj (2026-06-12). At this volume
@@ -104,62 +105,42 @@ Orchestrator: tools/run_daily_summary.py
 ```
 
 ### Auth (shared)
-```
-outlook_auth.py  — confidential client via cert (.secrets/concept-classifier.key).
-                   --bootstrap mints MS_REFRESH_TOKEN (one-time, Vikram signs in).
-                   --print-token / get_access_token() used by all Graph tools.
-Scopes: Mail.ReadWrite, Mail.Read, Mail.Send, User.Read
-```
+Cert-based confidential client via `outlook_auth.py`; all Graph tools call its
+`get_access_token()`. Pattern, rationale, and re-bootstrap procedure live in
+[CLAUDE.md](CLAUDE.md); Azure setup in [workflows/outlook_setup.md](workflows/outlook_setup.md).
+Scopes: Mail.ReadWrite, Mail.Read, Mail.Send, User.Read.
 
 ---
 
-## 4. File-by-file reference
+## 4. File-by-file: non-obvious gotchas only
 
-### Tools
-- `tools/outlook_auth.py` — Graph auth. Cert-based confidential client. `--bootstrap`
-  and `--print-token`. Gotcha: do NOT add `offline_access` to SCOPES (MSAL injects it).
-- `tools/outlook_fetch_unread.py` — classifier source. `isRead eq false` from
-  `SOURCE_FOLDER_ID`, `bodyPreview` only (~255 chars).
-- `tools/outlook_fetch_read.py` — digest source. `isRead eq true`, full plain-text
-  body via `Prefer: outlook.body-content-type="text"`. Default `--limit 200`.
-- `tools/normalize_email.py` — flattens a Graph message. NOTE: drops sender/recipient
-  *display names*; `categorize_by_employee` reads the raw Graph message for those.
-- `tools/pre_classify.py` — deterministic sender_type + addressed_to_me from
-  `config/domain_lists.py`. No Gemini.
-- `tools/classify_with_gemini.py` — the classifier prompt (`SYSTEM_PROMPT`). 7 buckets
-  + the travel/trip rules. Now also passes To/Cc to the model. Keep the confidence-rules
-  block in sync with `apply_label.py`'s `≤ 0.6` gate.
-- `tools/apply_label.py` — confidence gate + label→folder_id lookup.
-- `tools/outlook_move_message.py` — `POST /me/messages/{id}/move`.
-- `tools/summarize_with_gemini.py` — digest summarizer prompt. Returns 3 bullets;
-  falls back to `["[summary unavailable]"]` on bad JSON. Caps the body at
-  `BODY_CHAR_LIMIT = 4000` chars (+ truncation marker) before calling Gemini.
-- `tools/categorize_by_employee.py` — routes a digest email to employee section(s).
-  Greeting-pin first ("Hi/Hello/Dear <name>"), else From/To display-name substring.
-  **CC intentionally excluded.** Known limit: short names can substring-collide
-  (e.g. "Amit" in "Amitabh").
-- `tools/outlook_send_mail.py` — `POST /me/sendMail`. Sender implicit (Vikram).
-  Requires `Mail.Send` scope.
-- `tools/run_inbox_cycle.py` — classifier orchestrator. `--dry-run`, `--limit 25`.
-  Holds `SKIP_SUBJECT_PREFIX = "Daily Inbox Summary"` and
-  `DETERMINISTIC_SENDER_TYPES` (the Gemini short-circuit table — keep in sync with
-  the CRITICAL sender_type rules in `classify_with_gemini.py`'s prompt).
-- `tools/run_daily_summary.py` — digest orchestrator. `--dry-run`, `--limit 200`.
-  Renders the per-email received timestamp (`_received_display`, IST).
+What each tool does is stated in its docstring, and the pipeline shape is in §3 —
+neither is repeated here. This list is only the traps you can't see from the surface:
 
-### Config
-- `config/domain_lists.py` — Buyer/Internal/Promo/Misc/BBG-Roxy domains + `VIKRAM_EMAIL`,
-  `VIKRAM_NAMES`. Classifier tuning knob.
-- `config/employees.py` — 12 names grouped in the digest (incl. "Vikram Mehta" as full
-  name). Digest tuning knob.
-- `config/folder_ids.py` — `SOURCE_FOLDER_ID` (the watched Inbox folder) +
-  `LABEL_TO_FOLDER_ID` for the 7 destinations.
-
-### Other
-- `workflows/*.md` — SOPs (classify_inbox, daily_summary, outlook_setup).
-- `Inbox Automation.json` — historical n8n export. NOT used at runtime. Do not re-enable.
-- `.env`, `.secrets/concept-classifier.key` — secrets, gitignored, droplet-only +
-  local. Never committed.
+- `tools/outlook_auth.py` — do NOT add `offline_access` to SCOPES (MSAL injects it
+  itself; adding it breaks the request).
+- `tools/outlook_fetch_unread.py` — selects `bodyPreview` only (~255 chars); the
+  classifier never sees full bodies (see §9).
+- `tools/outlook_fetch_read.py` — asks Graph for plain-text bodies via
+  `Prefer: outlook.body-content-type="text"`, which is why no HTML-stripping code
+  exists anywhere.
+- `tools/normalize_email.py` — drops sender/recipient *display names*;
+  `categorize_by_employee` reads the raw Graph message for those.
+- `tools/classify_with_gemini.py` — the prompt's confidence-rules block must stay in
+  sync with `apply_label.py`'s `≤ 0.6` gate AND with `DETERMINISTIC_SENDER_TYPES` in
+  `run_inbox_cycle.py` (the short-circuit assumes the prompt's CRITICAL sender_type
+  forces).
+- `tools/summarize_with_gemini.py` — caps the body at `BODY_CHAR_LIMIT = 4000` chars
+  (+ truncation marker); returns `["[summary unavailable]"]` on bad JSON rather than
+  failing the digest.
+- `tools/categorize_by_employee.py` — greeting-pin first, then From/To display-name
+  substring. CC is *intentionally* excluded. Short names can substring-collide
+  ("Amit" ⊂ "Amitabh").
+- `tools/run_inbox_cycle.py` — holds the `SKIP_SUBJECT_PREFIX = "Daily Inbox Summary"`
+  carve-out; removing it makes the classifier eat the digest (see §10).
+- `config/employees.py` — Vikram is listed as the full name "Vikram Mehta", not
+  "Vikram".
+- `Inbox Automation.json` — historical n8n export, not used at runtime.
 
 ---
 
@@ -181,29 +162,16 @@ All local commands run from the project root with the venv python (`.venv/bin/py
 .venv/bin/python tools/run_daily_summary.py --limit 1
 ```
 
-### Deploy a change
-```bash
-git add -A && git commit -m "..." && git push           # on Mac
-ssh root@167.71.232.223 'cd /root/Email-Classifier && git pull'
-# secret change only: scp .env root@167.71.232.223:/root/Email-Classifier/.env
-```
-Next cron tick uses new code. No restart.
-
-### Watch it run
-```bash
-ssh root@167.71.232.223 'tail -f /root/inbox-cycle.log'     # classifier
-ssh root@167.71.232.223 'tail -f /root/daily-summary.log'   # digest
-```
+Deploying a change and watching the cron logs: commands are in
+[CLAUDE.md](CLAUDE.md) (Deployment / What needs me).
 
 ---
 
 ## 6. Key decisions & constraints (the "why")
 
-- **Cert-based confidential client, NOT a client secret** — the client tenant blocks
-  client secrets tenant-wide. Public-client refresh tokens rotate/invalidate on every
-  use (Microsoft single-use default), which breaks an unattended cron after the first
-  run. We tried it; it broke. Confidential-client refresh tokens are reusable. Don't
-  revisit this.
+- **Cert-based confidential client, NOT a client secret** — full rationale in
+  [CLAUDE.md](CLAUDE.md) (Auth pattern). Short version: tenant blocks client secrets;
+  the public-client alternative was tried and broke the cron. Don't revisit.
 - **VPS + Linux cron, not GitHub Actions / Claude routines** — sub-hour reliable
   scheduling. GH Actions cron is best-effort and silently throttles; Claude routines
   have a 1-hour minimum. The classifier needs to fire every minute, reliably.
@@ -264,15 +232,17 @@ short-circuit/truncation behave in production.
   message sits at the top of plain-text reply chains.
 - **No automated tests.** Verification is manual (dry-runs + isolation scripts).
 - **No alerting.** If the refresh token expires or Gemini errors, you find out by
-  reading the logs. Symptom is auth errors in `inbox-cycle.log`.
+  reading the logs (symptom + fix in CLAUDE.md's Operational gotchas).
 
 ---
 
 ## 10. Gotchas / lessons learned
 
-- **CLAUDE.md vs droplet drift** — when you change the cron on the droplet, update
-  CLAUDE.md in the *same* session, or it lies. (Happened once: docs said 8 AM while
-  the droplet ran 10 AM. Fixed in `dfd6710`.)
+- **Duplicated facts drift.** It happened twice: the digest schedule (docs said 8 AM
+  while the droplet ran 10 AM) and the employee list (CLAUDE.md claimed Vikram was
+  excluded; `config/employees.py` includes him). Every fact now has exactly one home
+  — see the documentation-ownership rules in the parent `../CLAUDE.md`. When you
+  change the droplet cron, update CLAUDE.md in the *same* session.
 - **Don't `git restore` and forget the droplet** — Round 2 was reverted locally, but
   the cron change had already been applied to the droplet. Local revert ≠ droplet
   revert. They drift independently.
@@ -286,8 +256,6 @@ short-circuit/truncation behave in production.
   why the dashboard email failed.
 - **Repo must stay public** for the droplet's credential-less `git pull`. If it's ever
   flipped private, the pull 404s with `could not read Username for 'https://github.com'`.
-- **Don't re-enable the old n8n workflow** — it races the classifier on the same inbox
-  and double-processes.
 
 ---
 

@@ -42,30 +42,20 @@ To watch cron in real time:
 
 ## What needs me (vs. what runs on its own)
 
-The droplet runs the entire pipeline autonomously. My Mac being on, off, online, or offline has zero effect on whether emails get classified. The only things that require me to do something:
+The droplet runs the entire pipeline autonomously — the Mac's state (on/off/online) is irrelevant, and after the initial `git clone` the droplet never talks to GitHub until a manual `git pull`. Only these need a human; in every case the next cron tick picks up the change with no restart:
 
-- **Code changes** — edit on Mac, `git push`, then `ssh root@167.71.232.223 'cd /root/Email-Classifier && git pull'`. The next cron tick uses the new code. No restart needed.
-- **Secret changes** (e.g., new refresh token after a re-bootstrap) — `scp .env root@167.71.232.223:/root/Email-Classifier/.env`. Same for `.secrets/concept-classifier.key` if the cert ever changes. Next cron tick uses the new values.
-- **Refresh token re-bootstrap** — possibly once every few months, possibly never. Symptom: cron starts failing with auth errors in the log. Fix: `python tools/outlook_auth.py --bootstrap` on Mac (Vikram signs in once), then scp `.env` to droplet.
+- **Code or tuning changes** — edit on Mac, commit, `git push`, then `ssh root@167.71.232.223 'cd /root/Email-Classifier && git pull'`.
+- **Secret changes** — `scp .env root@167.71.232.223:/root/Email-Classifier/.env`. Same for `.secrets/concept-classifier.key` if the cert ever changes.
+- **Refresh token re-bootstrap** — see Operational gotchas below.
 - **Pausing the cron** — `ssh root@167.71.232.223 'crontab -r'` removes the schedule. To restore, re-install the cron entry.
-- **Tuning the classifier** — same as code changes (edit `config/domain_lists.py` or the prompt in `tools/classify_with_gemini.py`, push, pull on droplet).
-
-What does NOT need me:
-- The Mac being open or awake
-- The Mac being connected to the internet
-- Me logging into the droplet to "check on it"
-- Anything related to GitHub at runtime — after `git clone`, the droplet doesn't talk to GitHub again until I manually `git pull`
-- Microsoft refresh token expiry, *unless and until* it actually expires
 
 ## Tuning behavior
 
 Knobs:
 - **Domain lists** ([config/domain_lists.py](config/domain_lists.py)) — Buyer / Internal / Promotional / Miscellaneous / BBG-Roxy domain assignments. Used by the per-minute classifier.
-- **Classifier prompt** (`SYSTEM_PROMPT` inside [tools/classify_with_gemini.py](tools/classify_with_gemini.py)) — keep the confidence-rules block in sync with the `<= 0.6 → Needs review` gate in [tools/apply_label.py](tools/apply_label.py).
-- **Employee list** ([config/employees.py](config/employees.py)) — names whose emails get grouped in the daily digest. Vikram is intentionally excluded.
+- **Classifier prompt** (`SYSTEM_PROMPT` inside [tools/classify_with_gemini.py](tools/classify_with_gemini.py)) — keep the confidence-rules block in sync with the `<= 0.6 → Needs review` gate in [tools/apply_label.py](tools/apply_label.py) and with the `DETERMINISTIC_SENDER_TYPES` short-circuit table in [tools/run_inbox_cycle.py](tools/run_inbox_cycle.py).
+- **Employee list** ([config/employees.py](config/employees.py)) — 12 names whose emails get grouped in the daily digest. Vikram is included as the full name "Vikram Mehta".
 - **Summarizer prompt** (`SYSTEM_PROMPT` inside [tools/summarize_with_gemini.py](tools/summarize_with_gemini.py)) — controls the 3-bullet style of the daily digest.
-
-All edits follow the same flow: edit locally, commit, push, then `git pull` on the VPS. No restart needed; the next cron tick picks up the change.
 
 ## Operational gotchas
 
