@@ -35,6 +35,17 @@ IST = ZoneInfo("Asia/Kolkata")
 OTHER_BUCKET = "Other reads"
 
 
+def _received_display(msg: dict) -> str:
+    raw = msg.get("receivedDateTime") or ""
+    if not raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00")).astimezone(IST)
+    except ValueError:
+        return ""
+    return dt.strftime("%a, %d %b %Y, %I:%M %p IST")
+
+
 def _sender_display(msg: dict) -> str:
     sender = (msg.get("from") or {}).get("emailAddress") or {}
     name = sender.get("name") or ""
@@ -58,6 +69,7 @@ def _process_one(msg: dict) -> dict:
         "message_id": norm["message_id"],
         "subject": norm.get("subject", ""),
         "sender_display": _sender_display(msg),
+        "received_display": _received_display(msg),
         "buckets": buckets or [],
         "bullets": bullets,
     }
@@ -91,9 +103,15 @@ def _render_html(groups: dict[str, list[dict]], date_str: str, total: int) -> st
             continue
         parts.append(f"<h3>{e(section)}</h3>")
         for it in items:
+            received = it.get("received_display", "")
+            received_html = (
+                f'<br><span style="color:#666666;font-size:12px;">{e(received)}</span>'
+                if received
+                else ""
+            )
             parts.append(
                 f'<p style="margin-bottom:4px;"><b>{e(it["subject"] or "(no subject)")}</b>'
-                f' &mdash; from {e(it["sender_display"])}</p>'
+                f' &mdash; from {e(it["sender_display"])}{received_html}</p>'
             )
             parts.append("<ul>")
             for b in it["bullets"]:
