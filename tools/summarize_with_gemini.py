@@ -44,11 +44,20 @@ RULES:
 - Do not invent facts not present in the email."""
 
 
+# Reply chains quote the whole prior thread below the newest message, so the
+# tail of a long body is mostly stale repeated text. Cap what we send to
+# Gemini; the urgency cues the bullets need live in the opening lines.
+BODY_CHAR_LIMIT = 4000
+
+
 def _user_message(item: dict) -> str:
+    body = item.get("body", "") or ""
+    if len(body) > BODY_CHAR_LIMIT:
+        body = body[:BODY_CHAR_LIMIT] + "\n[... older part of this thread truncated ...]"
     return (
         f"Sender: {item.get('sender_address','')}\n"
         f"Subject: {item.get('subject','')}\n\n"
-        f"Body:\n{item.get('body','')}"
+        f"Body:\n{body}"
     )
 
 
