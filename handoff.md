@@ -64,10 +64,17 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
 - **Poison-email guards** (2026-07-02, after the $45 incident — see §10) —
   (a) any per-message failure now moves the email to "Needs review" and marks it
   seen, breaking the infinite retry loop; (b) classifier input capped at 20
-  recipients / 2,000 body chars; (c) classifier runs with `thinkingBudget: 0`.
-  Verified: offline tests for the fallback (live, dry-run, and move-also-fails
-  paths) and caps; one live Gemini call confirming `thinkingConfig` is accepted
-  with unchanged classification.
+  recipients / 2,000 body chars; (c) classifier runs with `thinkingBudget: 0`;
+  (d) per-message attempt cap: if even the fallback move keeps failing (bad
+  folder id, sustained throttling), the message is abandoned after 5 cycles —
+  worst case per email is 5 Gemini calls, ever. Verified: offline tests for the
+  fallback (live, dry-run, move-also-fails), the caps, the abandon-after-5 path,
+  and throttle recovery; one live Gemini call confirming `thinkingConfig`.
+- **Vulnerability audit** (2026-07-02) — full pass over tools, configs, git
+  history, n8n export, and droplet. Secrets clean everywhere (never committed;
+  droplet files are 0600). Digest HTML properly escapes all Gemini/email-derived
+  text. Added logrotate for the two droplet logs. Open item: the public repo
+  exposes client business data (see §9).
 
 ### 🔜 NOT STARTED / parked
 - **Explicit Gemini prompt caching** — DROPPED by Yuvraj (2026-06-12). At this volume
@@ -240,7 +247,15 @@ short-circuit/truncation behave in production.
   message sits at the top of plain-text reply chains.
 - **No automated tests.** Verification is manual (dry-runs + isolation scripts).
 - **No alerting.** If the refresh token expires or Gemini errors, you find out by
-  reading the logs (symptom + fix in CLAUDE.md's Operational gotchas).
+  reading the logs (symptom + fix in CLAUDE.md's Operational gotchas). A GCP
+  billing budget alert on the Gemini project is the cheap mitigation for cost
+  incidents; recommended, not yet set up.
+- **The public repo exposes client business data.** No credentials — but
+  `config/domain_lists.py` (Concept Clothing's buyer list), `config/employees.py`
+  (employee first names), Vikram's email address, and the workflow docs are
+  readable by anyone. The repo is public so the droplet can `git pull` without
+  credentials (see §6). Fix if it ever matters: private repo + a read-only
+  deploy key on the droplet. Decision is Yuvraj's/Vikram's; flagged 2026-07-02.
 
 ---
 

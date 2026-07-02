@@ -32,6 +32,14 @@ from tools.pre_classify import pre_classify  # noqa: E402
 SEEN_PATH = ROOT / ".tmp" / "seen_message_ids.json"
 SEEN_LIMIT = 5000  # cap so the file never grows unbounded
 
+# Per-message retry cap. A message only retries when BOTH its target move and
+# the Needs-review fallback move failed (e.g. Graph throttling or a bad folder
+# id). Each retry costs a Gemini call, so after MAX_ATTEMPTS failed cycles the
+# message is abandoned: marked seen and left visible in the inbox for Vikram.
+ATTEMPTS_PATH = ROOT / ".tmp" / "attempt_counts.json"
+MAX_ATTEMPTS = 5
+ATTEMPTS_LIMIT = 500  # cap tracked ids so the file never grows unbounded
+
 # Emails whose subject starts with this prefix are left untouched in the
 # Inbox — they are the daily-summary digests sent by run_daily_summary.py,
 # and the client wants them to remain visible in the Inbox until he reads
@@ -64,8 +72,25 @@ def _save_seen(ids: list[str]) -> None:
     SEEN_PATH.write_text(json.dumps(ids[-SEEN_LIMIT:]))
 
 
+def _load_attempts() -> dict[str, int]:
+    if not ATTEMPTS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(ATTEMPTS_PATH.read_text())
+        return data if isinstance(data, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
+def _save_attempts(attempts: dict[str, int]) -> None:
+    ATTEMPTS_PATH.parent.mkdir(exist_ok=True)
+    trimmed = dict(list(attempts.items())[-ATTEMPTS_LIMIT:])
+    ATTEMPTS_PATH.write_text(json.dumps(trimmed))
+
+
 def run_cycle(limit: int, dry_run: bool) -> dict:
     seen = set(_load_seen())
+    attempts = _load_attempts()
     started = datetime.now(timezone.utc).isoformat()
 
     raw_messages = fetch_unread(limit)
@@ -75,6 +100,18 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
 
     results = []
     for msg in new_messages:
+        mid = msg.get("id")
+        if attempts.get(mid, 0) >= MAX_ATTEMPTS:
+            if not dry_run:
+                seen.add(mid)
+                attempts.pop(mid, None)
+            results.append({
+                "message_id": mid,
+                "subject": msg.get("subject", ""),
+                "error": f"abandoned after {MAX_ATTEMPTS} failed cycles; "
+                         "marked seen, left in inbox for manual handling",
+            })
+            continue
         try:
             norm = normalize(msg)
             pre = pre_classify(norm)
@@ -90,6 +127,7 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
             if not dry_run:
                 move_message(decided["message_id"], move_target)
                 seen.add(decided["message_id"])
+                attempts.pop(mid, None)
 
             results.append({
                 "message_id": decided["message_id"],
@@ -119,13 +157,21 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
                 try:
                     move_message(msg["id"], NEEDS_REVIEW_FOLDER_ID)
                     seen.add(msg["id"])
+                    attempts.pop(mid, None)
                     entry["fallback"] = "moved to Needs review"
                 except Exception as move_err:
-                    entry["fallback"] = f"move to Needs review failed: {move_err}"
+                    # Message will be refetched next cycle — count the attempt
+                    # so MAX_ATTEMPTS eventually abandons it.
+                    attempts[mid] = attempts.get(mid, 0) + 1
+                    entry["fallback"] = (
+                        f"move to Needs review failed "
+                        f"(attempt {attempts[mid]}/{MAX_ATTEMPTS}): {move_err}"
+                    )
             results.append(entry)
 
     if not dry_run:
         _save_seen(sorted(seen))
+        _save_attempts(attempts)
 
     return {
         "started_at": started,
