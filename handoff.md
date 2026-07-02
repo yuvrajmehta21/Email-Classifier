@@ -1,6 +1,6 @@
 # Email Classifier — Handoff
 
-_Last updated: 2026-06-12_
+_Last updated: 2026-07-02_
 
 This is the one document to read to pick this project up cold. It tracks **state**,
 not code internals. For the working SOPs see [workflows/](workflows/); for project
@@ -18,7 +18,7 @@ Priority order of goals:
 1. **Per-minute classifier** (the core product) — every unread email is classified by
    Gemini 2.5 Flash into one of 7 folders and moved there. Direct replacement for a
    previously-deployed n8n workflow. Reliability here matters most.
-2. **3× daily digest** (secondary) — summarizes the emails Vikram has pulled *back*
+2. **Daily digest** (secondary) — summarizes the emails Vikram has pulled *back*
    into his Inbox (his curated "deal-with-this" set) and emails him a per-employee
    summary from his own mailbox.
 
@@ -33,9 +33,10 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
   pre-classifies by domain → Gemini → confidence gate → moves to folder.
 - **Cert-based Graph auth** — confidential client, reusable refresh token. Verified
   minting tokens on both Mac and droplet.
-- **3× daily digest** — live on the droplet (schedule and cron lines in
+- **Daily digest** — live on the droplet (schedule and cron lines in
   [CLAUDE.md](CLAUDE.md)). Sends from Vikram to Vikram. Verified: real sends of 47
-  and 100 emails, 0 errors.
+  and 100 emails, 0 errors. (Cadence reduced from 3×/day to once daily at 10 AM IST
+  on 2026-06-14 at Vikram's request.)
 - **Classifier carve-out** — emails whose subject starts with `Daily Inbox Summary`
   are left in the Inbox (not classified/moved), so the digest itself stays visible.
 - **Digest self-skip** — the digest filters out prior `Daily Inbox Summary` emails
@@ -60,6 +61,13 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
 - **CLAUDE.md schedule drift fixed** (commit `dfd6710`) — docs now match the droplet
   cron. The schedule's single home is CLAUDE.md; this file deliberately doesn't
   repeat it.
+- **Poison-email guards** (2026-07-02, after the $45 incident — see §10) —
+  (a) any per-message failure now moves the email to "Needs review" and marks it
+  seen, breaking the infinite retry loop; (b) classifier input capped at 20
+  recipients / 2,000 body chars; (c) classifier runs with `thinkingBudget: 0`.
+  Verified: offline tests for the fallback (live, dry-run, and move-also-fails
+  paths) and caps; one live Gemini call confirming `thinkingConfig` is accepted
+  with unchanged classification.
 
 ### 🔜 NOT STARTED / parked
 - **Explicit Gemini prompt caching** — DROPPED by Yuvraj (2026-06-12). At this volume
@@ -91,7 +99,7 @@ Idempotency: .tmp/seen_message_ids.json (capped 5000)
 Orchestrator: tools/run_inbox_cycle.py
 ```
 
-### Digest (3× daily)
+### Digest (daily)
 ```
 outlook_fetch_read (isRead eq true, SOURCE_FOLDER_ID, full body)
   → [skip subjects starting "Daily Inbox Summary"]
@@ -202,7 +210,7 @@ None. Both jobs are live and healthy as of 2026-06-12.
 
 - [x] Per-minute classifier (n8n → Python)
 - [x] Cert-based auth
-- [x] 3× daily digest
+- [x] Daily digest (was 3×/day; reduced to once daily at 10 AM IST 2026-06-14)
 - [x] Classifier carve-out + digest self-skip
 - [x] Bump digest to 3×/day, then shift first slot to 10 AM IST
 - [x] Travel/trip vs promotional recognition
@@ -238,6 +246,14 @@ short-circuit/truncation behave in production.
 
 ## 10. Gotchas / lessons learned
 
+- **A failing email is a money pit if it stays unread.** 2026-06-22 20:06 UTC: one
+  email's Gemini call exceeded the 60s read timeout; the error path skipped both
+  `move_message` and the seen-file, so the per-minute cron refetched and re-sent it
+  363 times over ~12 hours until the email was manually deleted. Google bills
+  timed-out requests server-side → ~$45 in one day (the June billing spike, 417%
+  MoM). Diagnosis came entirely from `inbox-cycle.log` (all 363 errors shared one
+  message_id). Fix: fail → "Needs review" + mark seen, plus input caps. Any future
+  retry logic must have a retry cap and an eventual dead-letter destination.
 - **Duplicated facts drift.** It happened twice: the digest schedule (docs said 8 AM
   while the droplet ran 10 AM) and the employee list (CLAUDE.md claimed Vikram was
   excluded; `config/employees.py` includes him). Every fact now has exactly one home

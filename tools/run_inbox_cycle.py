@@ -21,6 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+from config.folder_ids import NEEDS_REVIEW_FOLDER_ID  # noqa: E402
 from tools.apply_label import apply_label  # noqa: E402
 from tools.classify_with_gemini import classify  # noqa: E402
 from tools.normalize_email import normalize  # noqa: E402
@@ -103,11 +104,25 @@ def run_cycle(limit: int, dry_run: bool) -> dict:
                 "moved": not dry_run,
             })
         except Exception as e:
-            results.append({
+            entry = {
                 "message_id": msg.get("id"),
+                "subject": msg.get("subject", ""),
                 "error": str(e),
                 "trace": traceback.format_exc(),
-            })
+            }
+            # Fail-safe: a failing email must NOT stay unread in the inbox,
+            # or it is refetched and retried every minute forever (one email
+            # looped 363 times on 2026-06-22/23 and cost ~$45 in Gemini
+            # charges). Route it to Needs review — the same safe fallback
+            # used for low-confidence classifications.
+            if not dry_run and msg.get("id"):
+                try:
+                    move_message(msg["id"], NEEDS_REVIEW_FOLDER_ID)
+                    seen.add(msg["id"])
+                    entry["fallback"] = "moved to Needs review"
+                except Exception as move_err:
+                    entry["fallback"] = f"move to Needs review failed: {move_err}"
+            results.append(entry)
 
     if not dry_run:
         _save_seen(sorted(seen))

@@ -48,6 +48,9 @@ Emails whose subject starts with `Daily Inbox Summary` are sent by the companion
 
 ## Edge cases & known behavior
 
+- **Any per-message failure (Gemini timeout, Graph hiccup, unexpected exception)** — the email is moved to "Needs review" and marked seen instead of being left unread. Left unread it would be refetched and retried every minute forever: on 2026-06-22/23 one email looped 363 timed-out Gemini calls over ~12 hours (~$45 — Google bills timed-out requests). If even the fallback move fails, the error is logged and the email naturally retries next cycle.
+- **Input caps** — `classify_with_gemini.py` sends at most `MAX_RECIPIENTS = 20` To/Cc addresses (with a `(+N more)` marker) and `MAX_BODY_CHARS = 2000` of body, so no single email can blow up the request payload.
+- **Thinking disabled** — the classifier calls Gemini with `thinkingBudget: 0`; a temperature-0 JSON label needs no reasoning tokens, and thinking bills at the higher output rate.
 - **Gemini returns invalid JSON** — `classify_with_gemini.py` falls back to `bucket_label="Needs review", confidence=0`. The confidence gate then routes to "Needs review" deterministically.
 - **Confidence ≤ 0.6** — overrides whatever label Gemini chose. Forced to "Needs review".
 - **Internal sender writing to a BBG/Roxy address** — `pre_classify.py` reclassifies these to `BBG_Roxy` regardless of body content (see the recipient-domain check).

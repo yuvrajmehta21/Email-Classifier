@@ -243,16 +243,29 @@ IMPORTANT CONSTRAINTS
 This system balances responsiveness with safety. Trust your judgment while respecting the confidence thresholds."""
 
 
+# Caps on what a single email may contribute to the Gemini request. A
+# pathological email (e.g. a huge recipient list) can otherwise blow up the
+# payload and drive the request past the read timeout — Google still bills
+# for a timed-out request. Classification only needs a sample of recipients
+# and the opening of the body.
+MAX_RECIPIENTS = 20
+MAX_BODY_CHARS = 2000
+
+
 def _recipient_addrs(recipients: list) -> str:
+    recipients = recipients or []
     addrs = []
-    for r in recipients or []:
+    for r in recipients[:MAX_RECIPIENTS]:
         addr = ((r or {}).get("emailAddress", {}) or {}).get("address", "") or ""
         if addr:
             addrs.append(addr)
+    if len(recipients) > MAX_RECIPIENTS:
+        addrs.append(f"(+{len(recipients) - MAX_RECIPIENTS} more)")
     return ", ".join(addrs)
 
 
 def _user_message(item: dict) -> str:
+    body = (item.get("body") or "")[:MAX_BODY_CHARS]
     return (
         f"sender_type: {item.get('sender_type','')}\n"
         f"addressed_to_me: {str(item.get('addressed_to_me', False)).lower()}\n\n"
@@ -261,7 +274,7 @@ def _user_message(item: dict) -> str:
         f"To: {_recipient_addrs(item.get('to', []))}\n"
         f"Cc: {_recipient_addrs(item.get('cc', []))}\n\n"
         f"Subject: {item.get('subject','')}\n\n"
-        f"Body:\n{item.get('body','')}"
+        f"Body:\n{body}"
     )
 
 
@@ -275,6 +288,10 @@ def classify(item: dict) -> dict:
         "generationConfig": {
             "temperature": 0,
             "responseMimeType": "application/json",
+            # Gemini 2.5 Flash "thinks" by default; a temperature-0 JSON
+            # label needs no reasoning tokens, and thinking bills at the
+            # higher output rate. Also caps runaway-generation blowups.
+            "thinkingConfig": {"thinkingBudget": 0},
         },
     }
     r = requests.post(
