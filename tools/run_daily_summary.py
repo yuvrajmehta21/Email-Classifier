@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run_daily_summary.py — Daily 8 AM IST inbox digest for Vikram.
+run_daily_summary.py — Scheduled inbox digest for Vikram (run times live in CLAUDE.md).
 
 Pipeline: fetch_read -> normalize -> categorize_by_employee -> summarize_with_gemini
 -> build HTML grouped by employee -> outlook_send_mail (to Vikram, from Vikram).

@@ -1,6 +1,6 @@
 # Email Classifier — Handoff
 
-_Last updated: 2026-07-02_
+_Last updated: 2026-07-09_
 
 This is the one document to read to pick this project up cold. It tracks **state**,
 not code internals. For the working SOPs see [workflows/](workflows/); for project
@@ -36,7 +36,9 @@ The whole thing runs autonomously on a $4/mo droplet. Nobody's laptop needs to b
 - **Daily digest** — live on the droplet (schedule and cron lines in
   [CLAUDE.md](CLAUDE.md)). Sends from Vikram to Vikram. Verified: real sends of 47
   and 100 emails, 0 errors. (Cadence reduced from 3×/day to once daily at 10 AM IST
-  on 2026-06-14 at Vikram's request.)
+  on 2026-06-14 at Vikram's request; a second morning run at 11 AM IST was added
+  2026-07-09. The digest is stateless, so extra runs needed no code change — just a
+  second cron line.)
 - **Classifier carve-out** — emails whose subject starts with `Daily Inbox Summary`
   are left in the Inbox (not classified/moved), so the digest itself stays visible.
 - **Digest self-skip** — the digest filters out prior `Daily Inbox Summary` emails
@@ -217,7 +219,8 @@ None. Both jobs are live and healthy as of 2026-06-12.
 
 - [x] Per-minute classifier (n8n → Python)
 - [x] Cert-based auth
-- [x] Daily digest (was 3×/day; reduced to once daily at 10 AM IST 2026-06-14)
+- [x] Daily digest (was 3×/day; reduced to once daily at 10 AM IST 2026-06-14;
+  second morning run at 11 AM IST added 2026-07-09)
 - [x] Classifier carve-out + digest self-skip
 - [x] Bump digest to 3×/day, then shift first slot to 10 AM IST
 - [x] Travel/trip vs promotional recognition

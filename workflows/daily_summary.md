@@ -1,7 +1,7 @@
 # Daily Inbox Summary digest
 
 ## Objective
-Once a day, read the emails Vikram has marked-read-and-kept (or moved back) in his Inbox, summarize each in 3 bullets, group by which listed employee the email involves, and email the digest to Vikram from his own mailbox. (Exact run time / cron line: see [CLAUDE.md](../CLAUDE.md) — the schedule has one home there.)
+On each scheduled run, read the emails Vikram has marked-read-and-kept (or moved back) in his Inbox, summarize each in 3 bullets, group by which listed employee the email involves, and email the digest to Vikram from his own mailbox. (Run times / cron lines: see [CLAUDE.md](../CLAUDE.md) — the schedule has one home there.)
 
 ## Required inputs (from `.env`)
 - `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CERT_THUMBPRINT`, `MS_CERT_PRIVATE_KEY_PATH`, `MS_REFRESH_TOKEN` — Microsoft Graph auth. The refresh token must have been bootstrapped after `Mail.Send` was added to `outlook_auth.SCOPES`.
@@ -68,9 +68,9 @@ Runs as a `cron` job on the same droplet as the per-minute classifier:
 - Wrapped in `flock` with a separate lock file (`/tmp/daily-summary.lock`) so it doesn't block the per-minute classifier.
 - Logs to `/root/daily-summary.log` on the droplet.
 
-Cron line (UTC droplet), using the schedule from CLAUDE.md:
+Cron line shape (one line per scheduled run time — the times themselves live in CLAUDE.md):
 ```
-30 4 * * * cd /root/Email-Classifier && /usr/bin/flock -n /tmp/daily-summary.lock /root/Email-Classifier/.venv/bin/python tools/run_daily_summary.py >> /root/daily-summary.log 2>&1
+<schedule> cd /root/Email-Classifier && /usr/bin/flock -n /tmp/daily-summary.lock /root/Email-Classifier/.venv/bin/python tools/run_daily_summary.py >> /root/daily-summary.log 2>&1
 ```
 
 ## Verification
